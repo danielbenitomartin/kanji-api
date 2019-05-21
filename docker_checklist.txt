@@ -1,0 +1,69 @@
+Run at Localhost.
+
+
+0. (Optional) If the machine has never been created on the local machine:
+docker-machine create -d virtualbox dev
+
+1. Start the already created docker machine:
+(dev is the name of the machine. To list all available machines use 'docker-machine ls'):
+docker-machine start dev
+
+2. Make the dev machine active:
+eval "$(docker-machine env dev)"
+
+3. Uncomment the SQLALCHEMY_BINDS lines in project/config.py
+#SQLALCHEMY_BINDS = {'kanji' : os.environ.get('KANJI_DATABASE_URL')}
+
+4. Build the image (if it hasn't been done recently):
+docker-compose build
+
+4.5 (Optional: Follow steps 5-7 for the 'Run at AWS EC2' stage if the kanji database needs to be imported).
+
+5. Run the service image (-d runs it in the background. To see the console output, take out the -d):
+docker-compose up -d
+
+
+Run at AWS EC2.
+
+
+0. (If the AWS hasn't been configured locally to provide AWS Credentials).
+Update the credentials file on ~/.aws/credentials:
+[default]
+aws_access_key_id = AKID1234567890
+aws_secret_access_key = MY-SECRET-KEY
+
+1. We use the same port that is used on local development:
+docker-machine create --driver amazonec2 --amazonec2-open-port 5001 --amazonec2-region sa-east-1 aws-sandbox
+
+(If necessary, Add port 5001 to the Security Groups):
+https://stackoverflow.com/questions/26338301/ec2-how-to-add-port-8080-in-security-group
+
+2. Build the remote container on AWS:
+docker-compose -f docker-compose-prod.yml up -d
+
+3. Recreate de Database and Populate it with the following 2 commands:
+docker-compose -f docker-compose-prod.yml run users-service python manage.py recreate_db
+docker-compose -f docker-compose-prod.yml run users-service python manage.py seed_db
+
+4. After that, it is necessary to import the kanji database (the export file is in project/db/kanji.sql).
+Before doing that, we need to make sure that the database jmdict is created with the appropriate user/password permissions.
+If it wasn't, we can access the postgres container in the remote machine:
+docker exec -ti $(docker ps -aqf "name=users-db") psql -U postgres
+
+5. Once there is access to the psql service, create the database manually if it wasn't created with the create.sql file:
+CREATE DATABASE jmdict;
+CREATE USER jmdictdb WITH encrypted password 'your_password';
+CREATE USER jmdictdbv WITH encrypted password 'your_password';
+GRANT all privileges ON database jmdict to jmdictdb;
+GRANT all privileges ON database jmdict to jmdictdbv;
+
+6. Find the name and id of the Docker container hosting the Postgres instance:
+docker ps
+
+7. Find the volumes available in the Docker container:
+docker inspect -f '{{ json .Mounts }}' <container_id> | python -m json.tool
+
+8. Copy the dump from your host system to one of the volumes:
+Run docker cp /project/db/kanji.sql users-db:<path_to_volume>.kanji.sql
+
+9. The API should be working correctly on the EC2 instance on AWS.
